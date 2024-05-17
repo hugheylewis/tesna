@@ -36,7 +36,7 @@ def get_scanners():
     response = requests.get(scanner_header.url, headers=headers)
     json_response = json.loads(response.text)
     for i in json_response['scans']:
-        if "" in i['name']:  # use this to filter scans based on name
+        if "ADD_YOUR_SCAN_NAME_HERE_FOR_FILTERING" in i['name']:  # If you don't want to filter scans based on the name, then delete this line 
             scanner_ids[i['id']] = i['schedule_uuid']
     return scanner_ids
 
@@ -71,8 +71,11 @@ def get_scanner_details(get_scanners_id):
 
     response = requests.get(scanner_results_header.url, headers=headers)
     json_response = json.loads(response.text)
-    for i in json_response['hosts']:
-        scanned_host_ids[i['asset_id']] = i['hostname']
+    try:
+        for i in json_response['hosts']:
+            scanned_host_ids[i['asset_id']] = i['hostname']
+    except KeyError:
+        print("The key 'hosts' does not exist in the API response.")
     return scanned_host_ids
 
 
@@ -104,15 +107,37 @@ def get_host_details(schedule_uuid, asset_id):
     return host_vulnerability_plugins, datetime_lessthan_oneweek
 
 
+def get_vuln_details(plugin_id):
+    def filter_none_and_fixed(d):
+        return {k: filter_none_and_fixed(v) if isinstance(v, dict) else v for k, v in d.items() if
+                v is not None and not (k == "state" and v == "FIXED")}
+
+    vuln_data = []
+    scanner_results_header = Header(url=f"https://cloud.tenable.com/workbenches/vulnerabilities/{plugin_id}/info")
+
+    headers = {
+        "accept": scanner_results_header.ACCEPT,
+        "X-ApiKeys": f"accessKey={scanner_results_header.ACCESS_KEY};secretKey={scanner_results_header.SECRET_KEY}"
+    }
+
+    response = requests.get(scanner_results_header.url, headers=headers)
+    json_response = json.loads(response.text)
+    filtered_response = filter_none_and_fixed(json_response)
+    # return filtered_response['info']['plugin_details']['name']
+    return filtered_response['info']['plugin_details']['name'], filtered_response['info']['description'], filtered_response['info']['solution'], filtered_response['info']['see_also']
+
+
 if '__main__' == __name__:
+    sn_ticket_data = []
     current_datetime = datetime.now()
     scanner_ids_dict = get_scanners()
     for scanner_id, scanner_schedule_uuid in scanner_ids_dict.items():
-        #TODO: add your own scanner_id value here. Remove this if statement to iterate over all scan groups, instead of just one (this is only here for small-scale testing)
-        if scanner_id == YOUR_SCANNER_ID_HERE:
-            scanned_hosts = get_scanner_details(scanner_id)
-            print(scanned_hosts)
-            for asset_id_key, hostname_value in scanned_hosts.items():
-                host_details_dict, last_scan_date = get_host_details(scanner_schedule_uuid, asset_id_key)
-                print(f"Vulnerabilities found on {hostname_value} from scan on {last_scan_date}:\n{host_details_dict}")
-              
+        scanned_hosts = get_scanner_details(scanner_id)
+        for device_id, hostnames in scanned_hosts.items():
+            print(hostnames)
+        for asset_id_key, hostname_value in scanned_hosts.items():
+            host_details_dict, last_scan_date = get_host_details(scanner_schedule_uuid, asset_id_key)
+            print(f"Vulnerabilities found on {hostname_value} from scan on {last_scan_date}:\n{host_details_dict}")
+            for plugin_id, plugin_name in host_details_dict.items():
+                name, details, solution, see_also = get_vuln_details(plugin_id)
+                print(f"\t{name}\n\t{details}\n\t{solution}\n\t{see_also}\n\t")
