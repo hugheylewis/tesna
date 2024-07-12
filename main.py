@@ -1,4 +1,3 @@
-import logging
 from requests.auth import HTTPBasicAuth
 from config import config
 import requests
