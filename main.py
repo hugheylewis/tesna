@@ -1,214 +1,160 @@
-from datetime import datetime
+import logging
+from requests.auth import HTTPBasicAuth
 from config import config
 import requests
 import json
 
+access_key = config.APIkeys.access_key
+secret_key = config.APIkeys.secret_key
 
-class TenableHeader:
+hostname = input(str("Enter hostname: "))
+device_owner = input(str("Enter device owner: "))
 
-    ACCEPT = "application/json"
-    ACCESS_KEY = config.APIkeys.access_key
-    SECRET_KEY = config.APIkeys.secret_key
+def get_device_id(hostname):
+    import requests
 
-    def __init__(self, url):
-        self._url = url
-
-    @property
-    def url(self):
-        return self._url
-
-    @url.setter
-    def url(self, new_url):
-        if isinstance(new_url, str):
-            self._url = new_url
-
-
-class MsHeader:
-
-    ACCEPT = '"accept": "application/json"'
-
-    def __init__(self, tenant_id, app_id, app_secret, url):
-        self._tenant_id = tenant_id
-        self._app_id = app_id
-        self._app_secret = app_secret
-        self._url = url
-
-    @property
-    def tenant_id(self):
-        return self._tenant_id
-
-    @property
-    def app_id(self):
-        return self._app_id
-
-    @property
-    def app_secret(self):
-        return self._app_secret
-
-    @property
-    def url(self):
-        return self._url
-
-    @url.setter
-    def url(self, new_url):
-        if isinstance(new_url, str):
-            self._url = new_url
-
-
-def get_scanners():
-    scanner_ids = {}
-    scanner_header = TenableHeader(url="https://cloud.tenable.com/scans")
+    url = f"https://cloud.tenable.com/workbenches/assets?filter.0.filter=host.target&filter.0.quality=match&filter.0.value={hostname}"
 
     headers = {
-        "accept": scanner_header.ACCEPT,
-        "X-ApiKeys": f"accessKey={scanner_header.ACCESS_KEY};secretKey={scanner_header.SECRET_KEY}"
+        "accept": "application/json",
+        f"X-ApiKeys": f"accessKey={access_key};secretKey={secret_key}"
     }
 
-    response = requests.get(scanner_header.url, headers=headers)
+    response = requests.get(url, headers=headers)
     json_response = json.loads(response.text)
-    for i in json_response['scans']:
-        if "YOUR_SCANNER_PREFIX_HERE" in i['name']:  # if you're not filtering on scanner names, then delete this line
-            scanner_ids[i['id']] = i['schedule_uuid']
-    return scanner_ids
+
+    return json_response
 
 
-def get_scanner_details(get_scanners_id):
-    scanned_host_ids = {}
-    scanner_results_header = TenableHeader(url=f"https://cloud.tenable.com/scans/{get_scanners_id}")
+def get_device_vulnerabilities(hostname_id):
+    url = f"https://cloud.tenable.com/workbenches/assets/{hostname_id}/vulnerabilities"
 
     headers = {
-        "accept": scanner_results_header.ACCEPT,
-        "X-ApiKeys": f"accessKey={scanner_results_header.ACCESS_KEY};secretKey={scanner_results_header.SECRET_KEY}"
+        "accept": "application/json",
+        "X-ApiKeys": f"accessKey={access_key};secretKey={secret_key}",
     }
 
-    response = requests.get(scanner_results_header.url, headers=headers)
+    response = requests.get(url, headers=headers)
     json_response = json.loads(response.text)
-    try:
-        for i in json_response['hosts']:
-            scanned_host_ids[i['asset_id']] = i['hostname']
-    except KeyError:
-        print("The key 'hosts' does not exist in the API response.")
-    return scanned_host_ids
+    return json_response
 
 
-def get_host_details(schedule_uuid, asset_id):
-    host_vulnerability_plugins = {}
-
-    scanner_results_header = TenableHeader(
-        url=f"https://cloud.tenable.com/scans/{schedule_uuid}/hosts/{asset_id}")
-
-    headers = {
-        "accept": scanner_results_header.ACCEPT,
-        "X-ApiKeys": f"accessKey={scanner_results_header.ACCESS_KEY};secretKey={scanner_results_header.SECRET_KEY}"
-    }
-
-    response = requests.get(scanner_results_header.url, headers=headers)
-    json_response = json.loads(response.text)
-
-    # #TODO: Delete after done with troubleshooting
-    # print(f"scan_uuid: {schedule_uuid}\nhost_id: {asset_id}")
-
-    host_os = json_response['info']['operating-system'][0]
-    host_ip = json_response['info']['host-ip']
-    try:
-        for i in json_response['vulnerabilities']:
-            if i['severity'] == 4:
-                host_vulnerability_plugins[i['plugin_id']] = i['plugin_name']
-    except KeyError:
-        print(f"The key 'vulnerabilities' does not exist in the API response.\n{json_response}")
-    return host_vulnerability_plugins, host_os, host_ip
-
-
-def get_vuln_details(pid):
+def get_vuln_details(plugin_id):
     def filter_none_and_fixed(d):
         return {k: filter_none_and_fixed(v) if isinstance(v, dict) else v for k, v in d.items() if
                 v is not None and not (k == "state" and v == "FIXED")}
 
+    def get_vuln_evidence(plugin_id, device_id):
+        url = f"https://cloud.tenable.com/workbenches/vulnerabilities/{plugin_id}/outputs?filter.0.filter=host.id&filter.0.quality=match&filter.0.value={device_id}"
+
+        headers = {
+            "accept": "application/json",
+            "X-ApiKeys": f"accessKey={access_key};secretKey={secret_key}",
+        }
+
+        response = requests.get(url, headers=headers)
+        json_response = json.loads(response.text)
+
+        return json_response['outputs'][0]['plugin_output']
+
     vuln_data = []
-    scanner_results_header = TenableHeader(url=f"https://cloud.tenable.com/workbenches/vulnerabilities/"
-                                               f"{pid}/info")
 
     headers = {
-        "accept": scanner_results_header.ACCEPT,
-        "X-ApiKeys": f"accessKey={scanner_results_header.ACCESS_KEY};secretKey={scanner_results_header.SECRET_KEY}"
+        "accept": "application/json",
+        "X-ApiKeys": f"accessKey={access_key};secretKey={secret_key}",
     }
 
-    response = requests.get(scanner_results_header.url, headers=headers)
+    response = requests.get(f"https://cloud.tenable.com/workbenches/vulnerabilities/{plugin_id}/info", headers=headers)
     json_response = json.loads(response.text)
     filtered_response = filter_none_and_fixed(json_response)
-    vuln_data.extend([filtered_response['info']['plugin_details']['name'], filtered_response['info']['description'],
+    device_id = get_device_id(hostname)['assets'][0]['id']
+    vuln_data.extend([filtered_response['info']['plugin_details']['name'], filtered_response['info']['description'], get_vuln_evidence(plugin_id, device_id),
                       filtered_response['info']['solution'], filtered_response['info']['see_also']])
     return vuln_data
 
 
-def azure_token():
-    tenant = config.APIkeys.tenant_id
-    token_header = MsHeader(config.APIkeys.tenant_id, config.APIkeys.app_id, config.APIkeys.app_secret,
-                            url=f"https://login.microsoftonline.com/{tenant}/oauth2/token")
-    token_header.url = f"https://login.microsoftonline.com/{token_header.tenant_id}/oauth2/token"
-    resource_app_id_uri = 'https://api-us.securitycenter.microsoft.com'
+def get_user_location(uname):
+    query = f'user_name={uname}'
+    url = f'https://YOUR_INSTANCE_HERE.service-now.com/api/now/table/sys_user?sysparm_query={query}&sysparm_limit=1'
 
-    body = {
-        'resource': resource_app_id_uri,
-        'client_id': token_header.app_id,
-        'client_secret': token_header.app_secret,
-        'grant_type': 'client_credentials'
-    }
+    user = config.APIkeys.user
+    pwd = config.APIkeys.pwd
 
-    req = requests.post(token_header.url, body)
-    response = req.text
-    json_response = json.loads(response)
-    return json_response['access_token']
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
+    response = requests.get(url, auth=(user, pwd), headers=headers)
 
-def get_machine_id(hostname):
-    bearer_token = azure_token()
-
-    url = f"https://api.securitycenter.microsoft.com/api/machines?$filter=startswith(computerDnsName,'{hostname}')"
-    headers = {
-        f'Authorization': f'Bearer {bearer_token}'
-    }
-
-    response = requests.request("GET", url, headers=headers)
     json_response = json.loads(response.text)
-    return json_response['value'][0]['id']
+
+    def get_building(building_url):
+        username = config.APIkeys.user
+        password = config.APIkeys.pwd
+
+        building_response = requests.get(building_url, auth=HTTPBasicAuth(username, password))
+        building_json_response = json.loads(building_response.text)
+        return building_json_response['result']['name']
+
+    phone_number, floor, room = (json_response['result'][0]['phone'], json_response['result'][0]['u_floor'],
+                                 json_response['result'][0]['u_room'])
+    return phone_number, floor, room, get_building(json_response['result'][0]['building']['link'])
 
 
-def get_device_owner(machine_id):
-    bearer_token = azure_token()
-    machine_owners = []
+def open_ticket(affected_email, affected_user, caller, short_description, description):
+    phone_number, floor, room, building = get_user_location(affected_email)
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
-    url = f"https://api.securitycenter.microsoft.com/api/machines/{machine_id}/logonusers"
-    headers = {
-        f'Authorization': f'Bearer {bearer_token}'
+    payload = {
+        "u_affected_email": affected_email + "@YOUR_DOMAIN_HERE.com",
+        "u_affected_user": affected_user,
+        "u_caller": caller,
+        "short_description": short_description,
+        "u_service": "Vulnerability Management",
+        "contact_type": "Email",
+        "description": description,
+        "assignment_group": "YOUR_ASSIGNMENT_GROUP_HERE",
+        "u_symptom": 'YOUR_SYMPTOM_ID_HERE',
+        "phone": phone_number,
+        "u_building": building,
+        "u_floor": floor,
+        "u_room": room,
     }
 
-    response = requests.request("GET", url, headers=headers)
+    json_payload = json.dumps(payload)
+    response = requests.post('https://YOUR_INSTANCE_HERE.service-now.com/api/now/table/incident',
+                             auth=(config.APIkeys.user, config.APIkeys.pwd), headers=headers,
+                             data=json_payload)
+
+    if response.status_code != 200:
+        print('Status:', response.status_code, 'Headers:', response.headers, 'Error Response:', response.json())
+        exit()
+
     json_response = json.loads(response.text)
-    for user in json_response['value']:
-        machine_owners.append(user['accountName'])
-    return machine_owners
+    return json_response, building
 
 
-if '__main__' == __name__:
-    sn_ticket_data = []
-    current_datetime = datetime.now()
-    scanner_ids_dict = get_scanners()
-    for scanner_id, scanner_schedule_uuid in scanner_ids_dict.items():
-        scanned_hosts = get_scanner_details(scanner_id)
-        for device_id, hostnames in scanned_hosts.items():
-            print(hostnames)
-        for asset_id_key, hostname_value in scanned_hosts.items():
-            host_details_dict, host_operating_system, host_ip_address = get_host_details(scanner_schedule_uuid,
-                                                                                         asset_id_key)
-            if host_details_dict:
-                device_id = get_machine_id(hostname_value)
-                device_owner = get_device_owner(device_id)
-                print(f"Critical vulnerabilities found on {hostname_value} with IP {host_ip_address} affecting "
-                      f"{host_operating_system} and the owner of {device_owner}:")
-            else:
-                print(f"No critical vulnerabilities found on {hostname_value}")
-            for plugin_id, plugin_name in host_details_dict.items():
-                name, details, solution, see_also = get_vuln_details(plugin_id)
-                print(f"Vuln name: {name}\n\tVuln details: {details}\n\tVuln solution: {solution}\n\tMore information: "
-                      f"{see_also}\n\t")
+def main():
+    list_of_hostname_ids = []
+    all_sn_ticket_data = []
+
+    device_owner_split_name = device_owner.split('.')
+    capitalized_name = [word.capitalize() for word in device_owner_split_name]
+    device_owner_full_name = ' '.join(capitalized_name)
+    for i in get_device_id(hostname)['assets']:
+        list_of_hostname_ids.append(i['id'])
+    for device_id in list_of_hostname_ids:
+        device_vulnerabilities = get_device_vulnerabilities(device_id)
+        if len(device_vulnerabilities['vulnerabilities']) > 0:
+            for vuln in device_vulnerabilities['vulnerabilities']:
+                if vuln['severity'] == 4:
+                    print(vuln)
+                    name, details, evidence, solution, see_also = get_vuln_details(vuln['plugin_id'])
+                    each_link = ', '.join(see_also)
+                    sn_ticket_data_dict = f"Vulnerability Name: {name}\nEvidence: {evidence}\nSolution: {solution}\nMore Info: {each_link}\n"
+                    all_sn_ticket_data.append(sn_ticket_data_dict)
+    description = "\n".join(all_sn_ticket_data)
+    sn_ticket = open_ticket(device_owner, device_owner_full_name, device_owner_full_name,
+                            f"Critical vulnerabilities - {hostname}", description)
+    return sn_ticket
+
+
+print(main())
